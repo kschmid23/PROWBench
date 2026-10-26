@@ -18,7 +18,7 @@ if [ "$(uname -m)" = "aarch64" ]; then
   trap 'rm -f "$REQUIREMENTS"' EXIT
   grep -v -i -E "^(decord|vbench)" eval/requirements-quality.txt > "$REQUIREMENTS"
   uv pip install --python "$QUALITY_PY" -r "$REQUIREMENTS"
-  uv pip install --python "$QUALITY_PY" ./tools/decord_cv2
+  uv pip install --python "$QUALITY_PY" --no-deps ./tools/decord_cv2
   uv pip install --python "$QUALITY_PY" --no-deps vbench==0.1.5
 else
   uv pip install --python "$QUALITY_PY" -r eval/requirements-quality.txt

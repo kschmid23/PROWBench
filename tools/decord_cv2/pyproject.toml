@@ -7,7 +7,9 @@ name = "decord-cv2"
 version = "0.6.0+cv2"
 description = "decord's VideoReader on OpenCV, for aarch64 Linux where decord has no wheel"
 requires-python = ">=3.9"
-dependencies = ["numpy", "opencv-python-headless"]
+# No dependencies on purpose: it needs numpy and opencv, and the environment it is installed into pins those (the quality
+# environment's numpy 1.26.4 and opencv-python 4.11.0.86). Installing it must not move them.
+dependencies = []
 
 [tool.setuptools]
 packages = ["decord"]
