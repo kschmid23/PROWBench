@@ -80,11 +80,18 @@ done < "$WORK/samples.jsonl"
 
 echo "=== 4.6 visual quality, warp error, CLIP-Score (quality environment)"
 "$QUALITY_PY" -m prowbench_eval.metric_vbench prepare --samples "$WORK/samples.jsonl" --out-dir "$WORK/vbench_input"
-VBENCH="$PROWBENCH/.venv-quality/bin/vbench"
-"$VBENCH" evaluate --videos_path "$WORK/vbench_input" --mode=custom_input --output_path "$WORK/vbench_out" \
-  --load_ckpt_from_local true --dimension "imaging_quality aesthetic_quality"
-"$VBENCH" evaluate --videos_path "$WORK/vbench_input" --mode=custom_input --output_path "$WORK/vbench_ms_out" \
-  --load_ckpt_from_local true --dimension "motion_smoothness"
+# The vbench command starts its workers with the `python` on PATH, so the quality environment goes first there. It also exits 0 when they fail
+# to start, so each run has to leave its results file behind or the script stops.
+run_vbench() {
+  local out_dir="$1" dimension="$2"
+  PATH="$PROWBENCH/.venv-quality/bin:$PATH" vbench evaluate --videos_path "$WORK/vbench_input" --mode=custom_input --output_path "$out_dir" \
+    --load_ckpt_from_local true --dimension "$dimension"
+  local result
+  result="$(ls "$out_dir"/*_eval_results.json 2>/dev/null | head -1 || true)"
+  [ -n "$result" ] || { echo "ABORT: vbench wrote no *_eval_results.json in $out_dir (dimension: $dimension)"; exit 1; }
+}
+run_vbench "$WORK/vbench_out" "imaging_quality aesthetic_quality"
+run_vbench "$WORK/vbench_ms_out" "motion_smoothness"
 "$QUALITY_PY" -m prowbench_eval.metric_vbench summarise --vbench-json "$(ls "$WORK"/vbench_out/*_eval_results.json | head -1)" \
   --mapping "$WORK/vbench_input/mapping.json" --out-dir "$WORK/vbench"
 "$QUALITY_PY" -m prowbench_eval.metric_vbench summarise --vbench-json "$(ls "$WORK"/vbench_ms_out/*_eval_results.json | head -1)" \
