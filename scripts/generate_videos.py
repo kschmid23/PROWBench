@@ -47,6 +47,24 @@ def sample_id(sample: dict) -> str:
     return f"{sample['episode']}__{sample['camera']}__{sample['representation']}"
 
 
+def video_duration(path: Path) -> float:
+    result = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                            capture_output=True, text=True, check=True)
+    return float(result.stdout.strip())
+
+
+def hold_last_frame(path: Path, required_seconds: float) -> float:
+    """Extends a video that is shorter than the clip by repeating its last frame. Returns the seconds added."""
+    missing = required_seconds - video_duration(path)
+    if missing <= 0:
+        return 0.0
+    extended = path.with_suffix(".held.mp4")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(path), "-vf", f"tpad=stop_mode=clone:stop_duration={missing:.4f}",
+                    "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(extended)], check=True)
+    extended.replace(path)
+    return missing
+
+
 def render_edenlive(args: argparse.Namespace, dataset_dir: Path, sample: dict, prompt: str, target: Path) -> None:
     if not sample.get("firstFrame") or not (dataset_dir / sample["firstFrame"]).is_file():
         raise FileNotFoundError("no first frame for this sample (EdenLive needs the photoreal opening frame)")
@@ -97,6 +115,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, help="stop after this many rendered samples")
     parser.add_argument("--episode", help="only this episode id")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--hold-last-frame", action="store_true", help="repeat the last frame when a video is shorter than the clip (EdenLive at 24 fps gives 4.875 s of a 5 s clip)")
     parser.add_argument("--edenlive-root", required=True)
     parser.add_argument("--frames", type=int, help="EdenLive length (12n-3); default covers the clip at 24 fps")
     parser.add_argument("--matrix4-root", required=True)
@@ -129,7 +148,13 @@ def main() -> None:
             record = {"sample": sample_id(sample), "method": args.method}
             try:
                 render(args, dataset_dir, sample, read_prompt(dataset_dir, sample), target)
-                record.update(status="ok", seconds=round(time.time() - start, 1))
+                record.update(status="ok", seconds=round(time.time() - start, 1), video_seconds=round(video_duration(target), 3))
+                if video_duration(target) < sample["durationSeconds"] - 1e-3:
+                    if args.hold_last_frame:
+                        record["held_last_frame_seconds"] = round(hold_last_frame(target, sample["durationSeconds"]), 3)
+                        record["video_seconds"] = round(video_duration(target), 3)
+                    else:
+                        record["warning"] = f"video is shorter than the {sample['durationSeconds']} s clip; the evaluation needs the full clip (use --hold-last-frame)"
                 done += 1
             except (FileNotFoundError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
                 record.update(status="failed", error=str(error))
