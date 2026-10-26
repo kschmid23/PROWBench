@@ -9,7 +9,7 @@
 # Checkouts: EDENLIVE_ROOT (default ~/EdenLive, needs its dit-5b weights) and MATRIX4_ROOT (default ~/Matrix-Game/Matrix-Game-4).
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 require_eval_env
-[ "$#" -ge 3 ] || { sed -n '2,10p' "${BASH_SOURCE[0]}"; exit 2; }
+[ "$#" -ge 3 ] || { sed -n '2,9p' "${BASH_SOURCE[0]}"; exit 2; }
 
 method="$1"
 dataset="$2"

@@ -11,7 +11,7 @@
 #          approved once); the Qwen3.6-27B judge needs about 80 GB of free GPU memory (check with nvidia-smi).
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 require_eval_env
-[ "$#" -ge 3 ] || { sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 2; }
+[ "$#" -ge 3 ] || { sed -n '2,11p' "${BASH_SOURCE[0]}"; exit 2; }
 
 dataset="$1"
 method="$2"
