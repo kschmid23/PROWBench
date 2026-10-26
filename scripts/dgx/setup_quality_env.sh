@@ -20,6 +20,12 @@ if [ "$(uname -m)" = "aarch64" ]; then
   uv pip install --python "$QUALITY_PY" -r "$REQUIREMENTS"
   uv pip install --python "$QUALITY_PY" --no-deps ./tools/decord_cv2
   uv pip install --python "$QUALITY_PY" --no-deps vbench==0.1.5
+  # vbench's own dependencies that its imaging, aesthetic and motion-smoothness code imports (omegaconf and easydict for the AMT and RAFT
+  # code, scikit-learn). The packages the reported scores pin stay as they are.
+  PINS="$(mktemp)"
+  uv pip freeze --python "$QUALITY_PY" | grep -i -E "^(numpy|opencv-python|transformers|torch|torchvision|timm|pillow|scipy|pyiqa|triton|tokenizers)==" > "$PINS"
+  uv pip install --python "$QUALITY_PY" -c "$PINS" omegaconf easydict scikit-learn
+  rm -f "$PINS"
 else
   uv pip install --python "$QUALITY_PY" -r eval/requirements-quality.txt
 fi
