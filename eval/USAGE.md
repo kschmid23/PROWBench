@@ -100,6 +100,8 @@ python -m prowbench_eval.make_samples --dataset $DATA/verified_ff_40 \
     --representations <representation> --out $WORK/samples.jsonl --gt-dir $WORK/gt --work $WORK
 ```
 
+A video must be at least `PROWBENCH_EVAL_DURATION` seconds long (default 5.0), otherwise `make_samples` stops with "N videos are shorter than 5 s". `scripts/dgx/run_eval.sh` sets the duration to 4.8 s unless it is exported first, so renders of 117 frames at 24 fps (4.875 s) are accepted. Metrics computed at 4.8 s are not comparable with 5 s runs; render at least 120 frames (121 for models that need 4k+1 frames) to evaluate at the standard length.
+
 **4.3 Tracking [GPU]**
 
 ```bash
@@ -108,12 +110,16 @@ python -m prowbench_eval.detect_track --jobs $WORK/detect_jobs.json --tracker sa
     --sam3-fallback sam2 --sam2-model facebook/sam2.1-hiera-large --grid-hz 8 --device cuda:0
 ```
 
+`facebook/sam3` is a gated Hugging Face model. Accept its license on the model page with the account whose token you use and `export HF_TOKEN=<token>` in the shell (never store the token in the repository). Without access the run stops with `OSError: You are trying to access a gated repo ... 401 Client Error`. `--sam3-fallback sam2` only tracks labels that SAM 3 never detects, after SAM 3 has loaded; it does not replace SAM 3. `--tracker sam2` runs without SAM 3: it tracks with SAM 2.1 (`facebook/sam2.1-hiera-large`, not gated) seeded with ground-truth boxes, so its tracks are not comparable with SAM 3 detections.
+
 **4.4 Camera estimation [GPU]**
 
 ```bash
 <vipe checkout>/.venv/bin/python -m prowbench_eval.estimate_camera --jobs $WORK/camera_jobs.json --backend vipe --vipe-root <vipe checkout> \
     --vipe-pipeline pose_only --device cuda:0
 ```
+
+This step needs a ViPE 1.2.0 checkout with its own `.venv` (`git clone --branch v1.2.0 https://github.com/nv-tlabs/vipe.git`, then `uv sync` in it). `scripts/dgx/run_eval.sh` aborts without `--vipe-root`; pass `--skip camera` to run the entity metrics only.
 
 **4.5 Entity and camera metrics**
 

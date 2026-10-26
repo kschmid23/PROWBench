@@ -12,9 +12,14 @@ cd "$PROWBENCH"
 
 echo "=== 1/6 evaluation environment (Python 3.11) ==="
 [ -d .venv ] || uv venv --python 3.11 .venv
-# CUDA 13 build: the GB300 is Blackwell, and the cu128 build the README names is not the one validated here.
-uv pip install --python "$EVAL_PY" torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cu130
-uv pip install --python "$EVAL_PY" -r eval/requirements.txt -r eval/requirements-models.txt huggingface_hub
+# The README pins torch 2.10.0 (cu128). The GB300 is sm_103; torch 2.10.0+cu130 has no sm_103 kernels and a Linear layer with a bias fails
+# there (CUBLAS_STATUS_NOT_INITIALIZED in cublasLtMatmulAlgoGetHeuristic), which stops SAM 3 and the judge. 2.13.0+cu130 runs, so it replaces
+# the 2.10.0 / 0.25.0 pins here; the quality environment's 2.11.0 runs and keeps its pin.
+uv pip install --python "$EVAL_PY" torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cu130
+MODEL_REQUIREMENTS="$(mktemp)"
+trap 'rm -f "$MODEL_REQUIREMENTS"' EXIT
+grep -v -E "^(torch|torchvision)==" eval/requirements-models.txt > "$MODEL_REQUIREMENTS"
+uv pip install --python "$EVAL_PY" -r eval/requirements.txt -r "$MODEL_REQUIREMENTS" huggingface_hub
 "$EVAL_PY" -c "import torch; assert torch.cuda.is_available(), 'CUDA not visible'; print('torch', torch.__version__, torch.cuda.get_device_name(0))"
 
 echo "=== 2/6 dataset (about 2.2 GB) ==="
