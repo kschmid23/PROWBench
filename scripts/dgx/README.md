@@ -89,6 +89,6 @@ Only the three five-second datasets are handled. `long_horizon` and `multi4` hav
 
 ## Known gaps
 
-- **Motion smoothness (Smooth):** VBench's AMT checkpoint is a legacy pickle that torch 2.11 refuses to load by default (`Weights only load failed ... typing.OrderedDict`). Loading it needs `weights_only=False` for that checkpoint (WBench's loader does this for the same file); not enabled here. Use `--skip motion` until it is decided.
+- **Motion smoothness (Smooth):** VBench's AMT checkpoint holds a `typing.OrderedDict`, which torch 2.11's weights-only loader refuses (`Weights only load failed`). `tools/vbench_safe_globals/sitecustomize.py` allows that one type and `run_eval.sh` puts it on `PYTHONPATH` for the vbench calls; `weights_only` stays on. Loading was checked on `amt-s.pth`; the full motion-smoothness stage has not been run yet, so `--skip motion` remains available.
 - **Untested end to end:** `report_tables` without the camera or judge results; the Matrix-Game runner (scene and preset are guesses; `baseline` is meant to be the unoptimized preset); the judge stage.
 - **Scores vs reported:** the torch versions differ from the README pins (see Environments), so numbers may differ slightly from the reported scores.

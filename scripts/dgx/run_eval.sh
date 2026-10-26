@@ -87,7 +87,7 @@ run_vbench() {
   local out_dir="$1" dimension="$2"
   # Results of an earlier run (other videos) would be picked up as this run's, and would hide a run that wrote nothing.
   rm -f "$out_dir"/*_eval_results.json "$out_dir"/*_full_info.json
-  PATH="$PROWBENCH/.venv-quality/bin:$PATH" vbench evaluate --videos_path "$WORK/vbench_input" --mode=custom_input --output_path "$out_dir" \
+  PYTHONPATH="$PROWBENCH/tools/vbench_safe_globals${PYTHONPATH:+:$PYTHONPATH}" PATH="$PROWBENCH/.venv-quality/bin:$PATH" vbench evaluate --videos_path "$WORK/vbench_input" --mode=custom_input --output_path "$out_dir" \
     --load_ckpt_from_local true --dimension "$dimension"
   local result
   result="$(ls "$out_dir"/*_eval_results.json 2>/dev/null | head -1 || true)"
