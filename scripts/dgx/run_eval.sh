@@ -39,7 +39,8 @@ if ! skipping camera && [ -z "$vipe_root" ]; then
   exit 1
 fi
 
-export PROWBENCH_EVAL_DURATION=5
+# Evaluated length in seconds. 4.8 s fits the 117-frame (4.875 s at 24 fps) renders; export it first to use another value.
+export PROWBENCH_EVAL_DURATION="${PROWBENCH_EVAL_DURATION:-4.8}"
 export WORK="$PROWBENCH/work/$dataset/$method/$representation"
 mkdir -p "$WORK/metrics"
 cd "$PROWBENCH/eval"
