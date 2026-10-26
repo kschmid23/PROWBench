@@ -6,7 +6,8 @@
 # Usage:   bash scripts/dgx/run_eval.sh <dataset> <method> <representation> [--vipe-root DIR] [--skip STAGE]...
 #   dataset         verified_ff_40, unverified_ff_90 or gunfight (long_horizon and multi4 have their own stages in USAGE)
 #   --vipe-root     ViPE 1.2.0 checkout with its .venv (camera estimation, stage 4.4)
-#   --skip STAGE    camera | judge: leave a stage out. Metrics that depend on it are then missing from the table.
+#   --skip STAGE    camera | judge | motion: leave a stage out (motion = VBench motion smoothness, the "Smooth" column). Metrics that
+#                   depend on it are then missing from the table.
 # Needs:   scripts/dgx/setup.sh and setup_quality_env.sh done; facebook/sam3 downloaded (tracking, stage 4.3; needs HF_TOKEN access
 #          approved once); the Qwen3.6-27B judge needs about 80 GB of free GPU memory (check with nvidia-smi).
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
@@ -21,7 +22,7 @@ skipped=" "
 vipe_root=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --skip) skipped="$skipped${2:?--skip needs camera or judge} "; shift 2 ;;
+    --skip) skipped="$skipped${2:?--skip needs camera, judge or motion} "; shift 2 ;;
     --vipe-root) vipe_root="${2:?--vipe-root needs a directory}"; shift 2 ;;
     *) echo "ERROR: unknown option $1" >&2; exit 2 ;;
   esac
@@ -91,11 +92,17 @@ run_vbench() {
   [ -n "$result" ] || { echo "ABORT: vbench wrote no *_eval_results.json in $out_dir (dimension: $dimension)"; exit 1; }
 }
 run_vbench "$WORK/vbench_out" "imaging_quality aesthetic_quality"
-run_vbench "$WORK/vbench_ms_out" "motion_smoothness"
 "$QUALITY_PY" -m prowbench_eval.metric_vbench summarise --vbench-json "$(ls "$WORK"/vbench_out/*_eval_results.json | head -1)" \
   --mapping "$WORK/vbench_input/mapping.json" --out-dir "$WORK/vbench"
-"$QUALITY_PY" -m prowbench_eval.metric_vbench summarise --vbench-json "$(ls "$WORK"/vbench_ms_out/*_eval_results.json | head -1)" \
-  --mapping "$WORK/vbench_input/mapping.json" --out-dir "$WORK/vbench_ms"
+motion_args=()
+if skipping motion; then
+  echo "    motion smoothness: skipped"
+else
+  run_vbench "$WORK/vbench_ms_out" "motion_smoothness"
+  "$QUALITY_PY" -m prowbench_eval.metric_vbench summarise --vbench-json "$(ls "$WORK"/vbench_ms_out/*_eval_results.json | head -1)" \
+    --mapping "$WORK/vbench_input/mapping.json" --out-dir "$WORK/vbench_ms"
+  motion_args=(--vbench-motion "$WORK/vbench_ms/per_sample.jsonl")
+fi
 "$QUALITY_PY" -m prowbench_eval.metric_temporal --samples "$WORK/samples.jsonl" --out-dir "$WORK/metrics" --raft "$WEIGHTS/models/raft-things.pth" --device cuda:0
 "$QUALITY_PY" -m prowbench_eval.metric_clipscore --samples "$WORK/samples.jsonl" --out-dir "$WORK/metrics" --index "$DATA/$dataset" \
   --clip "$WEIGHTS/ViT-B-32.pt" --device cuda:0
@@ -116,7 +123,7 @@ fi
 
 echo "=== 4.8 table"
 "$EVAL_PY" -m prowbench_eval.report_tables rows --samples "$WORK/samples.jsonl" --metrics-dir "$WORK/metrics" \
-  --judge-dir "$WORK/judge" --vbench "$WORK/vbench/per_sample.jsonl" --vbench-motion "$WORK/vbench_ms/per_sample.jsonl" \
+  --judge-dir "$WORK/judge" --vbench "$WORK/vbench/per_sample.jsonl" "${motion_args[@]}" \
   --out "$WORK/rows.jsonl"
 "$EVAL_PY" -m prowbench_eval.report_tables table --rows "$WORK/rows.jsonl" --dataset "$DATA/$dataset" --out "$WORK/table.json"
 echo "table: $WORK/table.json"
