@@ -27,13 +27,24 @@ else
   "$EVAL_PY" tools/prepare_eval_data.py --download "$DOWNLOAD" --out "$DATA"
 fi
 
-echo "=== 4/6 RAFT and CLIP weights ==="
-mkdir -p "$WEIGHTS"
+echo "=== 4/6 RAFT and CLIP weights (WBench's copies are reused when present) ==="
+WBENCH_WEIGHTS="${WBENCH_WEIGHTS:-$HOME/WBench/weights}"
+mkdir -p "$WEIGHTS/models"
 if [ ! -f "$WEIGHTS/models/raft-things.pth" ]; then
-  wget -q -O "$WEIGHTS/models.zip" https://dl.dropboxusercontent.com/s/4j4z58wuv8o0mfz/models.zip
-  "$EVAL_PY" -m zipfile -e "$WEIGHTS/models.zip" "$WEIGHTS"
+  if [ -f "$WBENCH_WEIGHTS/raft/raft-things.pth" ]; then
+    ln -s "$WBENCH_WEIGHTS/raft/raft-things.pth" "$WEIGHTS/models/raft-things.pth"
+  else
+    wget -q -O "$WEIGHTS/models.zip" https://dl.dropboxusercontent.com/s/4j4z58wuv8o0mfz/models.zip
+    "$EVAL_PY" -m zipfile -e "$WEIGHTS/models.zip" "$WEIGHTS"
+  fi
 fi
-[ -f "$WEIGHTS/ViT-B-32.pt" ] || wget -q -O "$WEIGHTS/ViT-B-32.pt" https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt
+if [ ! -f "$WEIGHTS/ViT-B-32.pt" ]; then
+  if [ -f "$WBENCH_WEIGHTS/clip/ViT-B-32.pt" ]; then
+    ln -s "$WBENCH_WEIGHTS/clip/ViT-B-32.pt" "$WEIGHTS/ViT-B-32.pt"
+  else
+    wget -q -O "$WEIGHTS/ViT-B-32.pt" https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt
+  fi
+fi
 
 echo "=== 5/6 tracking and judge models (Hugging Face cache) ==="
 "$EVAL_HF" download facebook/sam2.1-hiera-large
