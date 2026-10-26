@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decord-cv2"
+version = "0.6.0+cv2"
+description = "decord's VideoReader on OpenCV, for aarch64 Linux where decord has no wheel"
+requires-python = ">=3.9"
+dependencies = ["numpy", "opencv-python-headless"]
+
+[tool.setuptools]
+packages = ["decord"]
