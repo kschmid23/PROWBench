@@ -97,7 +97,7 @@ def render_matrix4(args: argparse.Namespace, dataset_dir: Path, sample: dict, pr
     work = root / "outputs" / "prowbench" / sample["dataset"] / sample_id(sample)
     work.mkdir(parents=True, exist_ok=True)
     command = [str(root / ".venv" / "bin" / "matrix-game"), "render", "--scene", args.scene, "--input", str((dataset_dir / sample["video"]).resolve()),
-               "--resources", "resources", "--preset", args.preset, "--prompt-mode", "fixed", "--prompt", prompt, "--output", str(work)]
+               "--resources", "resources", "--preset", args.preset, "--prompt-mode", "fixed", f"--prompt={prompt}", "--output", str(work)]
     subprocess.run(command, cwd=root, check=True)
     rendered = work / "rendered.mp4"
     if not rendered.is_file():
