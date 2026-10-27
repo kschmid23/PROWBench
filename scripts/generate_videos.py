@@ -95,11 +95,14 @@ def render_edenlive(args: argparse.Namespace, dataset_dir: Path, sample: dict, p
 def render_matrix4(args: argparse.Namespace, dataset_dir: Path, sample: dict, prompt: str, target: Path) -> None:
     root = Path(args.matrix4_root)
     work = root / "outputs" / "prowbench" / sample["dataset"] / sample_id(sample)
-    work.mkdir(parents=True, exist_ok=True)
-    command = [str(root / ".venv" / "bin" / "matrix-game"), "render", "--scene", args.scene, "--input", str((dataset_dir / sample["video"]).resolve()),
-               "--resources", "resources", "--preset", args.preset, "--prompt-mode", "fixed", f"--prompt={prompt}", "--output", str(work)]
-    subprocess.run(command, cwd=root, check=True)
+    work.parent.mkdir(parents=True, exist_ok=True)
     rendered = work / "rendered.mp4"
+    if work.is_dir() and not rendered.is_file():
+        work.rmdir()  # matrix-game refuses an existing output directory; rmdir only removes an empty one left by a failed run
+    if not work.exists():
+        command = [str(root / ".venv" / "bin" / "matrix-game"), "render", "--scene", args.scene, "--input", str((dataset_dir / sample["video"]).resolve()),
+                   "--resources", "resources", "--preset", args.preset, "--prompt-mode", "fixed", f"--prompt={prompt}", "--output", str(work)]
+        subprocess.run(command, cwd=root, check=True)
     if not rendered.is_file():
         raise RuntimeError(f"matrix-game did not write {rendered}")
     shutil.copyfile(rendered, target)
