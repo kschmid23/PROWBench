@@ -1,4 +1,4 @@
-"""Generate PROWBench videos with EdenLive or Matrix-Game 4.0 from the prepared evaluation data.
+"""Generate PROWBench videos with EdenLive, Matrix-Game 4.0 or Cosmos 3 from the prepared evaluation data.
 
 For every sample of `<data>/<dataset>/samples.jsonl` (one view of one episode in one representation) the chosen method renders the
 proxy video and the result is written where the evaluation reads it:
@@ -11,11 +11,16 @@ Samples whose output already exists are skipped, so an interrupted run can be st
   edenlive  needs the first frame of the sample (the photoreal opening frame): samples without one are skipped and counted.
             One EdenLive sample folder per view is written under <edenlive-root>/examples/prowbench/<dataset>/.
   matrix4   renders the proxy video with one of the scene models (castle, ancient-egypt, racing); the prompt is the sample prompt.
+  cosmos3   Cosmos 3 video transfer with the blur control: the proxy video is resampled to 24 fps, padded to the model's 121 frames
+            (5.04 s), blurred, and sent with the sample prompt to a worker (scripts/cosmos3_worker.py) that runs in the Cosmos 3
+            diffusers environment under <cosmos3-root> and keeps the model loaded between samples. Sampling values come from
+            <cosmos3-root>/cookbooks/cosmos3/generator/transfer/specs/blur.json.
 """
 import argparse
 import csv
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -108,9 +113,71 @@ def render_matrix4(args: argparse.Namespace, dataset_dir: Path, sample: dict, pr
     shutil.copyfile(rendered, target)
 
 
+COSMOS3_MARKER = "@@COSMOS3@@ "
+COSMOS3_FRAMES = 121
+COSMOS3_FPS = 24.0
+COSMOS3_SPEC = Path("cookbooks") / "cosmos3" / "generator" / "transfer" / "specs" / "blur.json"
+COSMOS3_NEGATIVE_PROMPT = Path("cookbooks") / "cosmos3" / "generator" / "transfer" / "assets" / "negative_prompt.json"
+cosmos3_worker = None
+
+
+def cosmos3_read_reply(worker: subprocess.Popen) -> dict:
+    """Reads the worker's stdout up to its next reply line; every other line is the library's own output and goes to stderr."""
+    for line in worker.stdout:
+        if line.startswith(COSMOS3_MARKER):
+            return json.loads(line[len(COSMOS3_MARKER):])
+        sys.stderr.write(line)
+    raise RuntimeError(f"the Cosmos 3 worker exited with code {worker.wait()} before answering")
+
+
+def cosmos3_start(args: argparse.Namespace) -> subprocess.Popen:
+    root = Path(args.cosmos3_root)
+    python = root / ".venv-cosmos3-diffusers" / "bin" / "python"
+    # The worker lives in another environment: the evaluation venv must not leak into it.
+    env = {key: value for key, value in os.environ.items() if key not in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH")}
+    command = [str(python), str(Path(__file__).with_name("cosmos3_worker.py")), "--model", args.cosmos3_model,
+               "--negative-prompt-file", str(root / COSMOS3_NEGATIVE_PROMPT)]
+    worker = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    answer = cosmos3_read_reply(worker)
+    if answer.get("status") != "ready":
+        raise RuntimeError(f"the Cosmos 3 worker did not start: {answer}")
+    return worker
+
+
+def cosmos3_blur_control(source: Path, target: Path, width: int, height: int, factor: int, sigma: float) -> None:
+    """Blur control video for the diffusers pipeline, which takes a ready-made control (it does not blur an input itself).
+
+    Resamples to 24 fps, repeats the last frame until there are COSMOS3_FRAMES frames, downscales by `factor`, scales back up and
+    applies a Gaussian blur. The strength is this runner's own choice: the diffusers path has no `preset_blur_strength`.
+    """
+    filters = (f"fps={COSMOS3_FPS:g},tpad=stop_mode=clone:stop={COSMOS3_FRAMES},scale=iw/{factor}:ih/{factor}:flags=area,"
+               f"scale={width}:{height}:flags=bicubic,gblur=sigma={sigma}")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(source), "-vf", filters, "-frames:v", str(COSMOS3_FRAMES), "-an",
+                    "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(target)], check=True)
+
+
+def render_cosmos3(args: argparse.Namespace, dataset_dir: Path, sample: dict, prompt: str, target: Path) -> None:
+    global cosmos3_worker
+    if cosmos3_worker is None:
+        cosmos3_worker = cosmos3_start(args)
+    spec = json.loads((Path(args.cosmos3_root) / COSMOS3_SPEC).read_text(encoding="utf-8"))
+    control = target.with_name("cosmos3_control_blur.mp4")
+    cosmos3_blur_control(dataset_dir / sample["video"], control, sample["width"], sample["height"], args.cosmos3_blur_factor, args.cosmos3_blur_sigma)
+    job = {"control": "blur", "control_video": str(control), "prompt": prompt, "output": str(target), "height": sample["height"], "width": sample["width"],
+           "num_frames": COSMOS3_FRAMES, "fps": COSMOS3_FPS, "num_steps": spec["num_steps"], "guidance": spec["guidance"],
+           "control_guidance": spec["control_guidance"], "shift": spec["shift"], "seed": spec["seed"],
+           "num_video_frames_per_chunk": spec["num_video_frames_per_chunk"], "num_conditional_frames": spec["num_conditional_frames"]}
+    cosmos3_worker.stdin.write(json.dumps(job) + "\n")
+    cosmos3_worker.stdin.flush()
+    answer = cosmos3_read_reply(cosmos3_worker)
+    control.unlink(missing_ok=True)
+    if answer.get("status") != "ok":
+        raise RuntimeError(f"Cosmos 3 failed on {sample_id(sample)}: {answer.get('error')}")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate PROWBench videos with EdenLive or Matrix-Game 4.0")
-    parser.add_argument("--method", required=True, choices=("edenlive", "matrix4"))
+    parser = argparse.ArgumentParser(description="Generate PROWBench videos with EdenLive, Matrix-Game 4.0 or Cosmos 3")
+    parser.add_argument("--method", required=True, choices=("edenlive", "matrix4", "cosmos3"))
     parser.add_argument("--dataset", required=True, help="verified_ff_40, unverified_ff_90, gunfight, multi4 (long_horizon needs chunked prompts)")
     parser.add_argument("--representation", required=True, choices=REPRESENTATIONS + ("all",))
     parser.add_argument("--data", required=True, help="prowbench-eval-data")
@@ -124,6 +191,10 @@ def main() -> None:
     parser.add_argument("--matrix4-root", required=True)
     parser.add_argument("--scene", default="racing", choices=("castle", "ancient-egypt", "racing"), help="Matrix-Game 4.0 scene model")
     parser.add_argument("--preset", default="baseline", choices=("realtime", "quality", "baseline", "rtx5090", "rtx5090-sage"), help="Matrix-Game 4.0 preset")
+    parser.add_argument("--cosmos3-root", required=True, help="Cosmos checkout with .venv-cosmos3-diffusers")
+    parser.add_argument("--cosmos3-model", default="nvidia/Cosmos3-Nano")
+    parser.add_argument("--cosmos3-blur-factor", type=int, default=4, help="Cosmos 3: downscale factor of the blur control (larger = blurrier)")
+    parser.add_argument("--cosmos3-blur-sigma", type=float, default=2.0, help="Cosmos 3: Gaussian sigma applied after scaling back up")
     args = parser.parse_args()
 
     dataset_dir = Path(args.data) / args.dataset
@@ -134,7 +205,7 @@ def main() -> None:
         samples = [s for s in samples if s["episode"] == args.episode]
     assert samples, "no samples match"
 
-    render = render_edenlive if args.method == "edenlive" else render_matrix4
+    render = {"edenlive": render_edenlive, "matrix4": render_matrix4, "cosmos3": render_cosmos3}[args.method]
     log_dir = Path(args.videos) / args.dataset / args.method
     log_dir.mkdir(parents=True, exist_ok=True)
     done = skipped = failed = 0
@@ -165,6 +236,9 @@ def main() -> None:
             print(json.dumps(record), flush=True)
             log.write(json.dumps(record) + "\n")
             log.flush()
+    if cosmos3_worker is not None:
+        cosmos3_worker.stdin.close()
+        cosmos3_worker.wait()
     print(f"{args.method} {args.dataset}: {done} rendered, {skipped} already there, {failed} failed")
     sys.exit(1 if failed else 0)
 

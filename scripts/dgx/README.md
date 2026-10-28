@@ -12,6 +12,7 @@ Scripts that set up PROWBench, generate videos with EdenLive and Matrix-Game 4.0
 | `setup_vipe.sh` | ViPE v1.2.0 build for the camera metrics (`~/vipe-1.2.0`). |
 | `run_method.sh` | Generates videos with `edenlive` or `matrix4` (wraps `scripts/generate_videos.py`). |
 | `run_eval.sh` | Runs evaluation stages 4.1 to 4.8 of `eval/USAGE.md` for one dataset, method and representation. |
+| `run_all.sh` | `run_method.sh` then `run_eval.sh` for one method; the evaluation starts only if no video failed. `bash scripts/dgx/run_all.sh matrix4 verified_ff_40 mixed` |
 
 ## Folders
 
@@ -87,8 +88,56 @@ Only the three five-second datasets are handled. `long_horizon` and `multi4` hav
 | RAFT, CLIP ViT-B/32 | `weights/` | about 0.5 GB |
 | VBench weights | `vbench-cache/` | downloaded on first use |
 
+## Matrix-Game 4.0 checkpoints
+
+The release ([Skywork/Matrix-Game-4.0](https://huggingface.co/Skywork/Matrix-Game-4.0)) has scene checkpoints only and no base video model:
+
+| Folder | `--scene` | Content |
+|---|---|---|
+| `driving_game/` | `racing` | City Racing: Wan2.2-Fun-5B-Control causal, 864 x 480, fixed prompt about a sedan seen from behind on city streets |
+| `fps-castle/` | `castle` | Medieval Castle |
+| `fps-egypt/` | `ancient-egypt` | Ancient Egypt |
+| `base/` | | shared codec files only (`taew2_2.pth`, 22.9 MB, the streaming TAEHV decoder); the Wan2.2 VAE, the T5 text encoder and the tokenizer in `resources/base` come from `alibaba-pai/Wan2.2-Fun-5B-Control` |
+
+- **What PROWBench ran:** the `racing` scene checkpoint with `--preset baseline`. The preset changes denoising steps and codec, not the checkpoint, so the result is the racing scene model, not a base model. Label the row that way.
+- **Lineage:** the Hugging Face model tree lists `Wan-AI/Wan2.2-TI2V-5B` as the base model and `alibaba-pai/Wan2.2-Fun-5B-Control` as a finetuned parent.
+- **A base-model row** needs a different method: Wan2.2-Fun-5B-Control, or Matrix-Game 3.5 Base (`RiemannDynamics/Matrix-Game-3.5-Base`, in the Hugging Face cache). `run_method.sh` wraps only the 4.0 `matrix-game render` command, so neither is wired in; neither has been run.
+
 ## Known gaps
 
-- **Motion smoothness (Smooth):** VBench's AMT checkpoint holds a `typing.OrderedDict`, which torch 2.11's weights-only loader refuses (`Weights only load failed`). `tools/vbench_safe_globals/sitecustomize.py` allows that one type and `run_eval.sh` puts it on `PYTHONPATH` for the vbench calls; `weights_only` stays on. Loading was checked on `amt-s.pth`; the full motion-smoothness stage has not been run yet, so `--skip motion` remains available.
-- **Untested end to end:** `report_tables` without the camera or judge results; the Matrix-Game runner (scene and preset are guesses; `baseline` is meant to be the unoptimized preset); the judge stage.
+- **Motion smoothness (Smooth):** VBench's AMT checkpoint holds a `typing.OrderedDict`, which torch 2.11's weights-only loader refuses (`Weights only load failed`). `tools/vbench_safe_globals/sitecustomize.py` allows that one type and `run_eval.sh` puts it on `PYTHONPATH` for the vbench calls; `weights_only` stays on. The stage has run end to end for EdenLive (Smooth 0.983).
+- **Untested end to end:** `report_tables` without the camera or judge results; the Matrix-Game scene and preset choice (`racing` and `baseline` are guesses; `baseline` is meant to be the unoptimized preset). The runner works: 40 of 40 videos rendered at about 70 s each, 5.0 s long. `matrix-game render` rejects an existing `--output` directory, so the runner removes empty leftovers and lets it create the directory.
+- **Leaderboard Average and group scores:** the paper (arXiv 2610.02205) does not define them. The project-page leaderboard shows an Average that equals the plain mean of its six group scores (Entity, Logic / State, Camera, Quality, Temporal, Text), but how raw metrics map to those 0 to 100 group scores is not published in the paper, so no overall score is computed here. Compare methods per metric.
 - **Scores vs reported:** the torch versions differ from the README pins (see Environments), so numbers may differ slightly from the reported scores.
+
+## Reading the results
+
+`work/<dataset>/<method>/<representation>/rows.jsonl` has one row per video; `table.json` and the final printed line are the mean over those rows. There is no single overall score. Definitions are in Appendix B of the paper (arXiv 2610.02205) and `eval/README.md`.
+
+| Group | Metric | Better | Aggregation |
+|---|---|---|---|
+| Entity control | IoU | higher | mean box IoU over evaluated entities per clip, missing boxes count 0, then mean over clips |
+| Entity control | CErr | lower | box-center distance divided by the image diagonal, over entities with at least one matched instant |
+| Logic / State | ISR, LRA | higher | judged share of events (ISR) or timeline segments (LRA) per sample, mean over samples |
+| Logic / State | gISR, gLRA | higher | per sample ISR or LRA times clip IoU, mean over samples |
+| Camera control | Rot (degrees), Trans, CamMC | lower | ViPE pose-only camera against the recorded camera; Trans and CamMC use translations divided by their own maximum norm, so they measure path shape, not length |
+| Quality | Img, Aes | higher | VBench imaging (MUSIQ) and aesthetic (LAION) |
+| Quality | Warp | lower (error) | RAFT warp error between adjacent frames, x1000 |
+| Temporal | Smooth | higher | VBench motion smoothness |
+| Text | CLIP | higher | CLIP ViT-B/32 cosine similarity over 40 grid frames and the episode title, x100 |
+
+Quality and temporal metrics measure plausibility, not adherence to the engine state.
+
+### Verified-FF (40 pairs): EdenLive and the paper's Table 1
+
+EdenLive is this repository's run on `mixed`; the other rows are the paper's Table 1, Verified-FF.
+
+| Method | IoU | CErr | ISR | LRA | gISR | gLRA | Rot (deg) | Trans | CamMC | Img | Aes | Warp (x1e-3) | Smooth | CLIP |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| EdenLive (this run, mixed) | 0.477 | 0.038 | 0.588 | 0.668 | 0.288 | 0.323 | 5.3 | 0.239 | 0.290 | 68.0 | 0.607 | 0.483 | 0.983 | 24.9 |
+| LynnReal-Omni | 0.518 | 0.037 | 0.621 | 0.832 | 0.327 | 0.429 | 2.1 | 0.074 | 0.101 | 73.8 | 0.625 | 1.258 | 0.982 | 25.2 |
+| MiniMax-H3 | 0.494 | 0.038 | 0.669 | 0.748 | 0.330 | 0.372 | 3.4 | 0.080 | 0.133 | 70.1 | 0.633 | 0.444 | 0.991 | 25.2 |
+| CWM | 0.455 | 0.040 | 0.637 | 0.795 | 0.290 | 0.360 | 2.0 | 0.130 | 0.154 | 66.7 | 0.629 | 0.398 | 0.991 | 25.3 |
+| Seedance 2.5 | 0.433 | 0.043 | 0.652 | 0.832 | 0.280 | 0.358 | 3.6 | 0.101 | 0.152 | 66.9 | 0.629 | 0.313 | 0.993 | 25.3 |
+
+Table 1 also lists EchoWM, SANA-WM, LingBot 2.0, AlayaWorld v1.1, Cosmos 2.5 and C2R. It lists each method once; the input each receives is described in the paper's Section 4.1, so a row is not necessarily the same representation as this run's `mixed`.

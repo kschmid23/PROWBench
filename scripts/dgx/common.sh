@@ -21,6 +21,7 @@ QUALITY_PY="$PROWBENCH/.venv-quality/bin/python"
 # Method checkouts on the DGX.
 EDENLIVE_ROOT="${EDENLIVE_ROOT:-$HOME/EdenLive}"
 MATRIX4_ROOT="${MATRIX4_ROOT:-$HOME/Matrix-Game/Matrix-Game-4}"
+COSMOS3_ROOT="${COSMOS3_ROOT:-$HOME/cosmos}"   # needs .venv-cosmos3-diffusers and the Cosmos3-Nano checkpoint; HF_TOKEN in the shell
 
 require_uv() {
   command -v uv >/dev/null || { echo "ABORT: uv not on PATH (https://astral.sh/uv)"; exit 1; }
