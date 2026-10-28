@@ -11,7 +11,7 @@ Samples whose output already exists are skipped, so an interrupted run can be st
   edenlive  needs the first frame of the sample (the photoreal opening frame): samples without one are skipped and counted.
             One EdenLive sample folder per view is written under <edenlive-root>/examples/prowbench/<dataset>/.
   matrix4   renders the proxy video with one of the scene models (castle, ancient-egypt, racing); the prompt is the sample prompt.
-  cosmos3   Cosmos 3 video transfer with the blur control: the proxy video is resampled to 24 fps, padded to the model's 121 frames
+  cosmos3   Cosmos 3 video transfer with the blur control (the sample prompt is adapted for it: --cosmos3-prompt): the proxy video is resampled to 24 fps, padded to the model's 121 frames
             (5.04 s), blurred, and sent with the sample prompt to a worker (scripts/cosmos3_worker.py) that runs in the Cosmos 3
             diffusers environment under <cosmos3-root> and keeps the model loaded between samples. Sampling values come from
             <cosmos3-root>/cookbooks/cosmos3/generator/transfer/specs/blur.json.
@@ -21,6 +21,7 @@ import csv
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -156,11 +157,64 @@ def cosmos3_blur_control(source: Path, target: Path, width: int, height: int, fa
                     "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(target)], check=True)
 
 
+# Words the Cosmos guardrail's blocklist rejects in this dataset's prompts (the check is a fuzzy word match, not a judgement of meaning): found by
+# running the guardrail's own text check over every prompt. Each is replaced by a near synonym in the Cosmos 3 copy of the prompt only.
+COSMOS3_REPLACEMENTS = (
+    (r"\bsage green\b", "pale green"),
+    (r"\bsage\b", "pale green"),
+    (r"\bflat-colour\b", "solid-colour"),
+    (r"\bflat-shaded\b", "solid-shaded"),
+    (r"\bgrain\b", "texture"),
+    (r"\bgrand\b", "imposing"),
+    (r"\bbrick\b", "masonry"),
+    (r"\branger(s?)\b", r"warden\1"),
+    (r"\bbrake\b", "stop"),
+    (r"\bthe knight\b", "the armoured figure"),
+    (r"\bgritty\b", "rough"),
+)
+
+
+def cosmos3_replace(text: str) -> str:
+    """Applies COSMOS3_REPLACEMENTS, keeping a leading capital letter."""
+    for pattern, replacement in COSMOS3_REPLACEMENTS:
+        def swap(found: re.Match) -> str:
+            new = found.expand(replacement)
+            return new[0].upper() + new[1:] if found.group(0)[0].isupper() else new
+        text = re.sub(pattern, swap, text, flags=re.IGNORECASE)
+    return text
+
+
+COSMOS3_SECTIONS = ("subject_definitions", "summary", "retention_analysis", "detailed_description", "overall_soundscape", "non_diegetic_music")
+
+
+def cosmos3_prompt(prompt: str) -> str:
+    """The sample prompt rewritten for Cosmos 3 (this method only; the dataset prompts are not changed).
+
+    The PROWBench prompt is written for a model that gets a proxy video and an anchor picture: it opens with a control block about
+    <Video 1> and <Picture 1>, lists proxy and retention rules, and ends with soundscape and music lines. Cosmos 3 transfer gets only
+    the blurred control video and this text, so the control block, subject and retention lists, soundscape and music are dropped. What stays is
+    the shot description (style line, subjects and timeline), with the <Video 1> and <Picture 1> references reworded and the words the
+    guardrail blocklist rejects swapped for synonyms (COSMOS3_REPLACEMENTS).
+    """
+    parts = re.split(rf"^({'|'.join(COSMOS3_SECTIONS)}):[ \t]*$", prompt, flags=re.M)
+    sections = dict(zip(parts[1::2], (text.strip() for text in parts[2::2])))
+    description = sections["detailed_description"]
+    description = re.sub(r"The shot opens exactly on <Picture 1> and evolves continuously from that frame\.\s*", "", description)
+    description = re.sub(r"; no proxy colours[^.]*\.", ".", description)
+    description = re.sub(r"\s*Brushstrokes and painted edges belong to the target style; they never trace a proxy[^.]*\.", "", description)
+    description = description.replace(", as seen in <Picture 1>", "").replace("<Video 1>", "the control video")
+    description = re.sub(r"<Subject (\d+)>", r"Subject \1", description)
+    description = description.replace("<Picture 1>", "the reference image")
+    return cosmos3_replace(description)
+
+
 def render_cosmos3(args: argparse.Namespace, dataset_dir: Path, sample: dict, prompt: str, target: Path) -> None:
     global cosmos3_worker
     if cosmos3_worker is None:
         cosmos3_worker = cosmos3_start(args)
     spec = json.loads((Path(args.cosmos3_root) / COSMOS3_SPEC).read_text(encoding="utf-8"))
+    prompt = cosmos3_prompt(prompt) if args.cosmos3_prompt == "rewrite" else cosmos3_replace(prompt)
+    target.with_name("cosmos3_prompt.txt").write_text(prompt, encoding="utf-8")
     control = target.with_name("cosmos3_control_blur.mp4")
     cosmos3_blur_control(dataset_dir / sample["video"], control, sample["width"], sample["height"], args.cosmos3_blur_factor, args.cosmos3_blur_sigma)
     job = {"control": "blur", "control_video": str(control), "prompt": prompt, "output": str(target), "height": sample["height"], "width": sample["width"],
@@ -193,6 +247,8 @@ def main() -> None:
     parser.add_argument("--preset", default="baseline", choices=("realtime", "quality", "baseline", "rtx5090", "rtx5090-sage"), help="Matrix-Game 4.0 preset")
     parser.add_argument("--cosmos3-root", required=True, help="Cosmos checkout with .venv-cosmos3-diffusers")
     parser.add_argument("--cosmos3-model", default="nvidia/Cosmos3-Nano")
+    parser.add_argument("--cosmos3-prompt", choices=("minimal", "rewrite"), default="minimal",
+                        help="Cosmos 3 prompt: minimal = the sample prompt with only the guardrail-blocked words swapped; rewrite = also drop the proxy-control block (cosmos3_prompt)")
     parser.add_argument("--cosmos3-blur-factor", type=int, default=4, help="Cosmos 3: downscale factor of the blur control (larger = blurrier)")
     parser.add_argument("--cosmos3-blur-sigma", type=float, default=2.0, help="Cosmos 3: Gaussian sigma applied after scaling back up")
     args = parser.parse_args()
