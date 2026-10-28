@@ -215,9 +215,10 @@ def render_cosmos3(args: argparse.Namespace, dataset_dir: Path, sample: dict, pr
     spec = json.loads((Path(args.cosmos3_root) / COSMOS3_SPEC).read_text(encoding="utf-8"))
     prompt = cosmos3_prompt(prompt) if args.cosmos3_prompt == "rewrite" else cosmos3_replace(prompt)
     target.with_name("cosmos3_prompt.txt").write_text(prompt, encoding="utf-8")
+    width, height = map(int, args.cosmos3_size.split("x")) if args.cosmos3_size else (sample["width"], sample["height"])
     control = target.with_name("cosmos3_control_blur.mp4")
-    cosmos3_blur_control(dataset_dir / sample["video"], control, sample["width"], sample["height"], args.cosmos3_blur_factor, args.cosmos3_blur_sigma)
-    job = {"control": "blur", "control_video": str(control), "prompt": prompt, "output": str(target), "height": sample["height"], "width": sample["width"],
+    cosmos3_blur_control(dataset_dir / sample["video"], control, width, height, args.cosmos3_blur_factor, args.cosmos3_blur_sigma)
+    job = {"control": "blur", "control_video": str(control), "prompt": prompt, "output": str(target), "height": height, "width": width,
            "num_frames": COSMOS3_FRAMES, "fps": COSMOS3_FPS, "num_steps": spec["num_steps"], "guidance": spec["guidance"],
            "control_guidance": spec["control_guidance"], "shift": spec["shift"], "seed": spec["seed"],
            "num_video_frames_per_chunk": spec["num_video_frames_per_chunk"], "num_conditional_frames": spec["num_conditional_frames"]}
@@ -249,6 +250,7 @@ def main() -> None:
     parser.add_argument("--cosmos3-model", default="nvidia/Cosmos3-Nano")
     parser.add_argument("--cosmos3-prompt", choices=("minimal", "rewrite"), default="minimal",
                         help="Cosmos 3 prompt: minimal = the sample prompt with only the guardrail-blocked words swapped; rewrite = also drop the proxy-control block (cosmos3_prompt)")
+    parser.add_argument("--cosmos3-size", help="Cosmos 3: output size WIDTHxHEIGHT, e.g. 832x480 (default: the sample size)")
     parser.add_argument("--cosmos3-blur-factor", type=int, default=4, help="Cosmos 3: downscale factor of the blur control (larger = blurrier)")
     parser.add_argument("--cosmos3-blur-sigma", type=float, default=2.0, help="Cosmos 3: Gaussian sigma applied after scaling back up")
     args = parser.parse_args()

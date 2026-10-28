@@ -11,6 +11,7 @@ export DOWNLOAD="${DOWNLOAD:-$PROWBENCH/PROWBench}"                 # the Huggin
 export DATA="${DATA:-$PROWBENCH/prowbench-eval-data}"               # prepared by tools/prepare_eval_data.py
 export WEIGHTS="${WEIGHTS:-$PROWBENCH/weights}"                     # RAFT and CLIP
 export VIDEOS="${VIDEOS:-$PROWBENCH/model_output_video}"            # generated videos, USAGE layout
+export WORK_ROOT="${WORK_ROOT:-$PROWBENCH/work}"                    # evaluation results, <dataset>/<method>/<representation>
 export VBENCH_CACHE_DIR="${VBENCH_CACHE_DIR:-$PROWBENCH/vbench-cache}"
 export PYTHONPATH="$PROWBENCH/eval${PYTHONPATH:+:$PYTHONPATH}"
 
