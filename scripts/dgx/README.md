@@ -37,7 +37,7 @@ Check the GPU first with `nvidia-smi`; the GPU is shared. Finished samples are s
 
 ## Generating videos
 
-`run_method.sh <edenlive|matrix4> <dataset> <white|mixed|colored-obb|all> [options]`. Options: `--limit N`, `--episode ID`, `--overwrite`, `--hold-last-frame`, and for Matrix-Game `--scene` (default `racing`) and `--preset` (default `baseline`).
+`run_method.sh <edenlive|matrix4> <dataset> <white|mixed|colored-obb|all> [options]`. Options: `--limit N`, `--episode ID`, `--overwrite`, `--hold-last-frame`, and for Matrix-Game `--scene` (default `racing`; `base` = no scene fine-tune), `--matrix4-steps` and `--preset` (default `baseline`).
 
 | | EdenLive | Matrix-Game 4.0 |
 |---|---|---|
@@ -101,7 +101,7 @@ The release ([Skywork/Matrix-Game-4.0](https://huggingface.co/Skywork/Matrix-Gam
 
 - **What PROWBench ran:** the `racing` scene checkpoint with `--preset baseline`. The preset changes denoising steps and codec, not the checkpoint, so the result is the racing scene model, not a base model. Label the row that way.
 - **Lineage:** the Hugging Face model tree lists `Wan-AI/Wan2.2-TI2V-5B` as the base model and `alibaba-pai/Wan2.2-Fun-5B-Control` as a finetuned parent.
-- **A base-model row** needs a different method: Wan2.2-Fun-5B-Control, or Matrix-Game 3.5 Base (`RiemannDynamics/Matrix-Game-3.5-Base`, in the Hugging Face cache). `run_method.sh` wraps only the 4.0 `matrix-game render` command, so neither is wired in; neither has been run.
+- **Base-model row:** `--scene base` renders with the Wan2.2-Fun-5B-Control weights the scene models were fine-tuned from: no game checkpoint and no reference image (the racing profile is only reused for the code path). Prepare the converted weights once in the Matrix-Game-4 checkout with `bash scripts/dgx/run_base_model.sh --convert-only --download` (10 GB, see its `docs/base_model.md`), then `bash scripts/dgx/run_method.sh matrix4 verified_ff_40 mixed --scene base --limit 2`. `--matrix4-steps 1000,750,500,250` sets more denoising steps. Not run yet. The one earlier base render (taxi clip, `--preset quality`, 2 steps) turned to noise after about 60 frames, probably because the base weights are not distilled for few-step sampling, so test with more steps first.
 
 ## Known gaps
 

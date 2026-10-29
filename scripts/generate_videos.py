@@ -10,7 +10,9 @@ Samples whose output already exists are skipped, so an interrupted run can be st
 
   edenlive  needs the first frame of the sample (the photoreal opening frame): samples without one are skipped and counted.
             One EdenLive sample folder per view is written under <edenlive-root>/examples/prowbench/<dataset>/.
-  matrix4   renders the proxy video with one of the scene models (castle, ancient-egypt, racing); the prompt is the sample prompt.
+  matrix4   renders the proxy video with one of the scene models (castle, ancient-egypt, racing) or, with --scene base, with the
+            Wan2.2-Fun-5B-Control base weights that the scene models were fine-tuned from (no game, no reference image; prepare them with
+            Matrix-Game-4/scripts/dgx/run_base_model.sh --convert-only --download); the prompt is the sample prompt.
   cosmos3   Cosmos 3 video transfer with the blur control (the sample prompt is adapted for it: --cosmos3-prompt): the proxy video is resampled to 24 fps, padded to the model's 121 frames
             (5.04 s), blurred, and sent with the sample prompt to a worker (scripts/cosmos3_worker.py) that runs in the Cosmos 3
             diffusers environment under <cosmos3-root> and keeps the model loaded between samples. Sampling values come from
@@ -106,8 +108,12 @@ def render_matrix4(args: argparse.Namespace, dataset_dir: Path, sample: dict, pr
     if work.is_dir() and not rendered.is_file():
         work.rmdir()  # matrix-game refuses an existing output directory; rmdir only removes an empty one left by a failed run
     if not work.exists():
-        command = [str(root / ".venv" / "bin" / "matrix-game"), "render", "--scene", args.scene, "--input", str((dataset_dir / sample["video"]).resolve()),
-                   "--resources", "resources", "--preset", args.preset, "--prompt-mode", "fixed", f"--prompt={prompt}", "--output", str(work)]
+        # the base weights reuse the racing profile (the code needs one); its checkpoint and its gray sedan reference image are not used
+        scene_args = (["--scene", "racing", "--checkpoint", "resources/models/base/model.safetensors", "--no-sink-image"] if args.scene == "base"
+                      else ["--scene", args.scene])
+        steps_args = ["--steps", args.matrix4_steps] if args.matrix4_steps else []
+        command = [str(root / ".venv" / "bin" / "matrix-game"), "render", *scene_args, "--input", str((dataset_dir / sample["video"]).resolve()),
+                   "--resources", "resources", "--preset", args.preset, *steps_args, "--prompt-mode", "fixed", f"--prompt={prompt}", "--output", str(work)]
         subprocess.run(command, cwd=root, check=True)
     if not rendered.is_file():
         raise RuntimeError(f"matrix-game did not write {rendered}")
@@ -244,7 +250,8 @@ def main() -> None:
     parser.add_argument("--edenlive-root", required=True)
     parser.add_argument("--frames", type=int, help="EdenLive length (12n-3); default covers the clip at 24 fps")
     parser.add_argument("--matrix4-root", required=True)
-    parser.add_argument("--scene", default="racing", choices=("castle", "ancient-egypt", "racing"), help="Matrix-Game 4.0 scene model")
+    parser.add_argument("--scene", default="racing", choices=("castle", "ancient-egypt", "racing", "base"), help="Matrix-Game 4.0 scene model, or base = the Wan2.2-Fun-5B-Control base weights without a scene fine-tune")
+    parser.add_argument("--matrix4-steps", help="Matrix-Game 4.0 denoising timesteps, decreasing from 1000, e.g. 1000,750,500,250")
     parser.add_argument("--preset", default="baseline", choices=("realtime", "quality", "baseline", "rtx5090", "rtx5090-sage"), help="Matrix-Game 4.0 preset")
     parser.add_argument("--cosmos3-root", required=True, help="Cosmos checkout with .venv-cosmos3-diffusers")
     parser.add_argument("--cosmos3-model", default="nvidia/Cosmos3-Nano")

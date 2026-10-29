@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Runs the PROWBench evaluation (eval/USAGE.md section 4, stages 4.1 to 4.8) for one method and one proxy representation of a
+# Runs the PROWBench evaluation (eval/USAGE.md section 4, stages 4.1 to 4.6 and the table) for one method and one proxy representation of a
 # five-second dataset, on the videos in $VIDEOS/<dataset>/<method>/ (see scripts/dgx/run_method.sh). Results: $WORK/table.json,
 # with $WORK = work/<dataset>/<method>/<representation>. Stages that save per-sample results pick up where they stopped.
 #
 # Usage:   bash scripts/dgx/run_eval.sh <dataset> <method> <representation> [--vipe-root DIR] [--skip STAGE]...
 #   dataset         verified_ff_40, unverified_ff_90 or gunfight (long_horizon and multi4 have their own stages in USAGE)
 #   --vipe-root     ViPE 1.2.0 checkout with its .venv (camera estimation, stage 4.4)
-#   --skip STAGE    camera | judge | motion: leave a stage out (motion = VBench motion smoothness, the "Smooth" column). Metrics that
+#   --skip STAGE    camera | motion: leave a stage out (motion = VBench motion smoothness, the "Smooth" column). Metrics that
 #                   depend on it are then missing from the table.
 # Needs:   scripts/dgx/setup.sh and setup_quality_env.sh done; facebook/sam3 downloaded (tracking, stage 4.3; needs HF_TOKEN access
-#          approved once); the Qwen3.6-27B judge needs about 80 GB of free GPU memory (check with nvidia-smi).
+#          approved once). There is no VLM judge stage, so ISR, LRA, gISR and gLRA are not computed.
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 require_eval_env
 [ "$#" -ge 3 ] || { sed -n '2,11p' "${BASH_SOURCE[0]}"; exit 2; }
@@ -22,7 +22,7 @@ skipped=" "
 vipe_root=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --skip) skipped="$skipped${2:?--skip needs camera, judge or motion} "; shift 2 ;;
+    --skip) skipped="$skipped${2:?--skip needs camera or motion} "; shift 2 ;;
     --vipe-root) vipe_root="${2:?--vipe-root needs a directory}"; shift 2 ;;
     *) echo "ERROR: unknown option $1" >&2; exit 2 ;;
   esac
@@ -109,23 +109,9 @@ fi
 "$QUALITY_PY" -m prowbench_eval.metric_clipscore --samples "$WORK/samples.jsonl" --out-dir "$WORK/metrics" --index "$DATA/$dataset" \
   --clip "$WEIGHTS/ViT-B-32.pt" --device cuda:0
 
-if skipping judge; then
-  echo "=== 4.7 interaction and alignment (judge): skipped"
-else
-  echo "=== 4.7 interaction success rate and logic-render alignment (judge, Qwen3.6-27B)"
-  "$EVAL_PY" -c 'import json, sys; json.dump(dict(dataset=sys.argv[1], output=sys.argv[2]), open(sys.argv[3], "w"))' \
-    "$DATA/$dataset" "$WORK/registry" "$WORK/registry.json"
-  "$EVAL_PY" -m prowbench_eval.event_registry --config "$WORK/registry.json"
-  "$EVAL_PY" -m prowbench_eval.windowed_judging interaction --samples "$WORK/samples.jsonl" --gt-dir "$WORK/gt" \
-    --protocol "protocol/$dataset/settings.json" --registry "$WORK/registry/registry.json" \
-    --visual-events "protocol/$dataset/events.json" --out "$WORK/judge"
-  "$EVAL_PY" -m prowbench_eval.windowed_judging alignment --samples "$WORK/samples.jsonl" --gt-dir "$WORK/gt" \
-    --protocol "protocol/$dataset/settings.json" --descriptions "protocol/$dataset/descriptions.json" --out "$WORK/judge"
-fi
-
-echo "=== 4.8 table"
+echo "=== 4.7 table"
 "$EVAL_PY" -m prowbench_eval.report_tables rows --samples "$WORK/samples.jsonl" --metrics-dir "$WORK/metrics" \
-  --judge-dir "$WORK/judge" --vbench "$WORK/vbench/per_sample.jsonl" "${motion_args[@]}" \
+  --vbench "$WORK/vbench/per_sample.jsonl" "${motion_args[@]}" \
   --out "$WORK/rows.jsonl"
 "$EVAL_PY" -m prowbench_eval.report_tables table --rows "$WORK/rows.jsonl" --dataset "$DATA/$dataset" --out "$WORK/table.json"
 echo "table: $WORK/table.json"
