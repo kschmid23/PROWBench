@@ -23,6 +23,9 @@ QUALITY_PY="$PROWBENCH/.venv-quality/bin/python"
 EDENLIVE_ROOT="${EDENLIVE_ROOT:-$HOME/EdenLive}"
 MATRIX4_ROOT="${MATRIX4_ROOT:-$HOME/Matrix-Game/Matrix-Game-4}"
 COSMOS3_ROOT="${COSMOS3_ROOT:-$HOME/cosmos}"   # needs .venv-cosmos3-diffusers and the Cosmos3-Nano checkpoint; HF_TOKEN in the shell
+WAN5B_ROOT="${WAN5B_ROOT:-$HOME/wan22/VideoX-Fun}"                  # VideoX-Fun checkout
+WAN5B_PY="${WAN5B_PY:-$HOME/wan22/.venv/bin/python}"                # its environment
+WAN5B_MODEL="${WAN5B_MODEL:-$WEIGHTS/Wan2.2-Fun-5B-Control}"        # built by scripts/dgx/setup_wan5b.sh
 
 require_uv() {
   command -v uv >/dev/null || { echo "ABORT: uv not on PATH (https://astral.sh/uv)"; exit 1; }
