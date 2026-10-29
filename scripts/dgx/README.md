@@ -10,7 +10,8 @@ Scripts that set up PROWBench, generate videos with EdenLive and Matrix-Game 4.0
 | `setup.sh` | Evaluation environment, dataset, prepared evaluation data, RAFT and CLIP weights, SAM 2.1 and the judge model. Safe to run again. |
 | `setup_quality_env.sh` | The separate VBench environment (`.venv-quality`). |
 | `setup_vipe.sh` | ViPE v1.2.0 build for the camera metrics (`~/vipe-1.2.0`). |
-| `run_method.sh` | Generates videos with `edenlive` or `matrix4` (wraps `scripts/generate_videos.py`). |
+| `setup_wan5b.sh` | Builds the Wan2.2-Fun-5B-Control folder (`weights/Wan2.2-Fun-5B-Control`, symbolic links to files already in the Matrix-Game-4 checkout, plus `config.json`) for the `wan5b` method. |
+| `run_method.sh` | Generates videos with `edenlive`, `matrix4`, `cosmos3` or `wan5b` (wraps `scripts/generate_videos.py`). |
 | `run_eval.sh` | Runs evaluation stages 4.1 to 4.8 of `eval/USAGE.md` for one dataset, method and representation. |
 | `run_all.sh` | `run_method.sh` then `run_eval.sh` for one method; the evaluation starts only if no video failed. `bash scripts/dgx/run_all.sh matrix4 verified_ff_40 mixed` |
 
@@ -37,7 +38,7 @@ Check the GPU first with `nvidia-smi`; the GPU is shared. Finished samples are s
 
 ## Generating videos
 
-`run_method.sh <edenlive|matrix4> <dataset> <white|mixed|colored-obb|all> [options]`. Options: `--limit N`, `--episode ID`, `--overwrite`, `--hold-last-frame`, and for Matrix-Game `--scene` (default `racing`; `base` = no scene fine-tune), `--matrix4-steps` and `--preset` (default `baseline`).
+`run_method.sh <edenlive|matrix4|cosmos3|wan5b> <dataset> <white|mixed|colored-obb|all> [options]`. Options: `--limit N`, `--episode ID`, `--overwrite`, `--hold-last-frame`, and for Matrix-Game `--scene` (default `racing`; `base` = no scene fine-tune), `--matrix4-steps` and `--preset` (default `baseline`).
 
 | | EdenLive | Matrix-Game 4.0 |
 |---|---|---|
@@ -101,7 +102,7 @@ The release ([Skywork/Matrix-Game-4.0](https://huggingface.co/Skywork/Matrix-Gam
 
 - **What PROWBench ran:** the `racing` scene checkpoint with `--preset baseline`. The preset changes denoising steps and codec, not the checkpoint, so the result is the racing scene model, not a base model. Label the row that way.
 - **Lineage:** the Hugging Face model tree lists `Wan-AI/Wan2.2-TI2V-5B` as the base model and `alibaba-pai/Wan2.2-Fun-5B-Control` as a finetuned parent.
-- **Base-model row:** `--scene base` renders with the Wan2.2-Fun-5B-Control weights the scene models were fine-tuned from: no game checkpoint and no reference image (the racing profile is only reused for the code path). Prepare the converted weights once in the Matrix-Game-4 checkout with `bash scripts/dgx/run_base_model.sh --convert-only --download` (10 GB, see its `docs/base_model.md`), then `bash scripts/dgx/run_method.sh matrix4 verified_ff_40 mixed --scene base --limit 2`. `--matrix4-steps 1000,750,500,250` sets more denoising steps. Not run yet. The one earlier base render (taxi clip, `--preset quality`, 2 steps) turned to noise after about 60 frames, probably because the base weights are not distilled for few-step sampling, so test with more steps first.
+- **Base-model row:** use `wan5b`, not `--scene base`. The scene models are distilled, causal 2-step generators (`steps [1000, 500]`, guidance 1); `--scene base` puts the undistilled Wan2.2-Fun-5B-Control weights into that code path and gives noise (checked on 3 of 38 samples, and on an earlier taxi clip). `wan5b` runs the same weights the way VideoX-Fun runs them: 40 steps, guidance 6.0, seed 43 (the values of its example `predict_v2v_control_5b.py`), the proxy video as control at 24 fps padded to 121 frames, the sample prompt plus VideoX-Fun's own negative prompt, no reference image, no TeaCache; the result is trimmed to 120 frames (5.0 s). Run `bash scripts/dgx/setup_wan5b.sh` once, then `bash scripts/dgx/run_method.sh wan5b verified_ff_40 mixed --episode dv200-153-city-cat-encounter`. Options: `--wan5b-steps`, `--wan5b-guidance`, `--wan5b-seed`. Label the row "Wan2.2-Fun-5B-Control (the open base of Matrix-Game 4.0)"; it is not an official Matrix-Game base result. The runner is untested end to end.
 
 ## Known gaps
 

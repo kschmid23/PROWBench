@@ -1,4 +1,4 @@
-"""Generate PROWBench videos with EdenLive, Matrix-Game 4.0 or Cosmos 3 from the prepared evaluation data.
+"""Generate PROWBench videos with EdenLive, Matrix-Game 4.0, Cosmos 3 or the Wan2.2-Fun-5B-Control base model from the prepared evaluation data.
 
 For every sample of `<data>/<dataset>/samples.jsonl` (one view of one episode in one representation) the chosen method renders the
 proxy video and the result is written where the evaluation reads it:
@@ -10,9 +10,13 @@ Samples whose output already exists are skipped, so an interrupted run can be st
 
   edenlive  needs the first frame of the sample (the photoreal opening frame): samples without one are skipped and counted.
             One EdenLive sample folder per view is written under <edenlive-root>/examples/prowbench/<dataset>/.
-  matrix4   renders the proxy video with one of the scene models (castle, ancient-egypt, racing) or, with --scene base, with the
-            Wan2.2-Fun-5B-Control base weights that the scene models were fine-tuned from (no game, no reference image; prepare them with
-            Matrix-Game-4/scripts/dgx/run_base_model.sh --convert-only --download); the prompt is the sample prompt.
+  matrix4   renders the proxy video with one of the scene models (castle, ancient-egypt, racing); the prompt is the sample prompt.
+            --scene base puts the undistilled Wan2.2-Fun-5B-Control weights into the scene models' 2-step causal code path, which
+            gives noise (checked on 3 of 38 samples); use --method wan5b for the base model.
+  wan5b     the Wan2.2-Fun-5B-Control base model that the Matrix-Game scene models were fine-tuned from, run the way VideoX-Fun runs it (full
+            denoising steps with guidance, no game, no reference image): the proxy video is resampled to 24 fps, padded to 121 frames, and sent with the
+            sample prompt to a worker (scripts/wan5b_worker.py) in the VideoX-Fun environment that keeps the model loaded; the result is trimmed to
+            the clip length (120 frames, 5.0 s).
   cosmos3   Cosmos 3 video transfer with the blur control (the sample prompt is adapted for it: --cosmos3-prompt): the proxy video is resampled to 24 fps, padded to the model's 121 frames
             (5.04 s), blurred, and sent with the sample prompt to a worker (scripts/cosmos3_worker.py) that runs in the Cosmos 3
             diffusers environment under <cosmos3-root> and keeps the model loaded between samples. Sampling values come from
@@ -128,13 +132,13 @@ COSMOS3_NEGATIVE_PROMPT = Path("cookbooks") / "cosmos3" / "generator" / "transfe
 cosmos3_worker = None
 
 
-def cosmos3_read_reply(worker: subprocess.Popen) -> dict:
-    """Reads the worker's stdout up to its next reply line; every other line is the library's own output and goes to stderr."""
+def read_reply(worker: subprocess.Popen, marker: str, name: str) -> dict:
+    """Reads the worker's stdout up to its next reply line (starting with marker); every other line is the library's own output and goes to stderr."""
     for line in worker.stdout:
-        if line.startswith(COSMOS3_MARKER):
-            return json.loads(line[len(COSMOS3_MARKER):])
+        if line.startswith(marker):
+            return json.loads(line[len(marker):])
         sys.stderr.write(line)
-    raise RuntimeError(f"the Cosmos 3 worker exited with code {worker.wait()} before answering")
+    raise RuntimeError(f"the {name} worker exited with code {worker.wait()} before answering")
 
 
 def cosmos3_start(args: argparse.Namespace) -> subprocess.Popen:
@@ -145,7 +149,7 @@ def cosmos3_start(args: argparse.Namespace) -> subprocess.Popen:
     command = [str(python), str(Path(__file__).with_name("cosmos3_worker.py")), "--model", args.cosmos3_model,
                "--negative-prompt-file", str(root / COSMOS3_NEGATIVE_PROMPT)]
     worker = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-    answer = cosmos3_read_reply(worker)
+    answer = read_reply(worker, COSMOS3_MARKER, "Cosmos 3")
     if answer.get("status") != "ready":
         raise RuntimeError(f"the Cosmos 3 worker did not start: {answer}")
     return worker
@@ -230,15 +234,72 @@ def render_cosmos3(args: argparse.Namespace, dataset_dir: Path, sample: dict, pr
            "num_video_frames_per_chunk": spec["num_video_frames_per_chunk"], "num_conditional_frames": spec["num_conditional_frames"]}
     cosmos3_worker.stdin.write(json.dumps(job) + "\n")
     cosmos3_worker.stdin.flush()
-    answer = cosmos3_read_reply(cosmos3_worker)
+    answer = read_reply(cosmos3_worker, COSMOS3_MARKER, "Cosmos 3")
     control.unlink(missing_ok=True)
     if answer.get("status") != "ok":
         raise RuntimeError(f"Cosmos 3 failed on {sample_id(sample)}: {answer.get('error')}")
 
 
+WAN5B_MARKER = "@@WAN5B@@ "
+WAN5B_FRAMES = 121
+WAN5B_FPS = 24
+WAN5B_SHIFT = 5.0
+WAN5B_ALIGNMENT = 32  # the Wan2.2 VAE (16x) and the transformer patch (2x) need width and height in multiples of 32
+# VideoX-Fun's own negative prompt for Wan2.2-Fun (examples/wan2.2_fun/predict_v2v_control_5b.py); the dataset prompts carry none.
+WAN5B_NEGATIVE_PROMPT = ("色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，"
+                         "画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走")
+wan5b_worker = None
+
+
+def wan5b_start(args: argparse.Namespace) -> subprocess.Popen:
+    root = Path(args.wan5b_root)
+    # The worker lives in the VideoX-Fun environment: the evaluation venv must not leak into it, and VideoX-Fun must be importable.
+    env = {key: value for key, value in os.environ.items() if key not in ("VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH")}
+    env["PYTHONPATH"] = str(root)
+    command = [args.wan5b_python, str(Path(__file__).with_name("wan5b_worker.py")), "--videox-fun", str(root), "--model-dir", args.wan5b_model]
+    worker = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    answer = read_reply(worker, WAN5B_MARKER, "Wan 5B")
+    if answer.get("status") != "ready":
+        raise RuntimeError(f"the Wan 5B worker did not start: {answer}")
+    return worker
+
+
+def wan5b_control_video(source: Path, target: Path, width: int, height: int) -> None:
+    """The proxy video as the control video: resampled to 24 fps, padded with its last frame to WAN5B_FRAMES frames, scaled to the output size."""
+    filters = f"fps={WAN5B_FPS},tpad=stop_mode=clone:stop={WAN5B_FRAMES},scale={width}:{height}:flags=bicubic"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(source), "-vf", filters, "-frames:v", str(WAN5B_FRAMES), "-an",
+                    "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(target)], check=True)
+
+
+def trim_to_frames(source: Path, target: Path, frames: int) -> None:
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(source), "-frames:v", str(frames), "-an", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", str(target)], check=True)
+
+
+def render_wan5b(args: argparse.Namespace, dataset_dir: Path, sample: dict, prompt: str, target: Path) -> None:
+    global wan5b_worker
+    width, height = sample["width"], sample["height"]
+    if width % WAN5B_ALIGNMENT or height % WAN5B_ALIGNMENT:
+        raise ValueError(f"{width}x{height} is not a multiple of {WAN5B_ALIGNMENT}")
+    if wan5b_worker is None:
+        wan5b_worker = wan5b_start(args)
+    target.with_name("wan5b_prompt.txt").write_text(prompt, encoding="utf-8")
+    control, raw = target.with_name("wan5b_control.mp4"), target.with_name("wan5b_raw.mp4")
+    wan5b_control_video(dataset_dir / sample["video"], control, width, height)
+    job = {"control_video": str(control), "prompt": prompt, "negative_prompt": WAN5B_NEGATIVE_PROMPT, "output": str(raw), "height": height, "width": width,
+           "num_frames": WAN5B_FRAMES, "fps": WAN5B_FPS, "steps": args.wan5b_steps, "guidance": args.wan5b_guidance, "shift": WAN5B_SHIFT, "seed": args.wan5b_seed}
+    wan5b_worker.stdin.write(json.dumps(job) + "\n")
+    wan5b_worker.stdin.flush()
+    answer = read_reply(wan5b_worker, WAN5B_MARKER, "Wan 5B")
+    control.unlink(missing_ok=True)
+    if answer.get("status") != "ok":
+        raise RuntimeError(f"Wan 5B failed on {sample_id(sample)}: {answer.get('error')}")
+    trim_to_frames(raw, target, round(sample["durationSeconds"] * WAN5B_FPS))  # 121 frames at 24 fps are 5.04 s; the clip is 5.0 s
+    raw.unlink()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate PROWBench videos with EdenLive, Matrix-Game 4.0 or Cosmos 3")
-    parser.add_argument("--method", required=True, choices=("edenlive", "matrix4", "cosmos3"))
+    parser.add_argument("--method", required=True, choices=("edenlive", "matrix4", "cosmos3", "wan5b"))
     parser.add_argument("--dataset", required=True, help="verified_ff_40, unverified_ff_90, gunfight, multi4 (long_horizon needs chunked prompts)")
     parser.add_argument("--representation", required=True, choices=REPRESENTATIONS + ("all",))
     parser.add_argument("--data", required=True, help="prowbench-eval-data")
@@ -260,6 +321,12 @@ def main() -> None:
     parser.add_argument("--cosmos3-size", help="Cosmos 3: output size WIDTHxHEIGHT, e.g. 832x480 (default: the sample size)")
     parser.add_argument("--cosmos3-blur-factor", type=int, default=4, help="Cosmos 3: downscale factor of the blur control (larger = blurrier)")
     parser.add_argument("--cosmos3-blur-sigma", type=float, default=2.0, help="Cosmos 3: Gaussian sigma applied after scaling back up")
+    parser.add_argument("--wan5b-root", required=True, help="VideoX-Fun checkout")
+    parser.add_argument("--wan5b-python", required=True, help="Python of the VideoX-Fun environment")
+    parser.add_argument("--wan5b-model", required=True, help="Wan2.2-Fun-5B-Control folder (scripts/dgx/setup_wan5b.sh builds it)")
+    parser.add_argument("--wan5b-steps", type=int, default=40, help="Wan 5B: denoising steps (VideoX-Fun's own example value)")
+    parser.add_argument("--wan5b-guidance", type=float, default=6.0, help="Wan 5B: classifier-free guidance scale (VideoX-Fun's own example value)")
+    parser.add_argument("--wan5b-seed", type=int, default=43, help="Wan 5B: seed (VideoX-Fun's own example value)")
     args = parser.parse_args()
 
     dataset_dir = Path(args.data) / args.dataset
@@ -270,7 +337,7 @@ def main() -> None:
         samples = [s for s in samples if s["episode"] == args.episode]
     assert samples, "no samples match"
 
-    render = {"edenlive": render_edenlive, "matrix4": render_matrix4, "cosmos3": render_cosmos3}[args.method]
+    render = {"edenlive": render_edenlive, "matrix4": render_matrix4, "cosmos3": render_cosmos3, "wan5b": render_wan5b}[args.method]
     log_dir = Path(args.videos) / args.dataset / args.method
     log_dir.mkdir(parents=True, exist_ok=True)
     done = skipped = failed = 0
@@ -301,9 +368,10 @@ def main() -> None:
             print(json.dumps(record), flush=True)
             log.write(json.dumps(record) + "\n")
             log.flush()
-    if cosmos3_worker is not None:
-        cosmos3_worker.stdin.close()
-        cosmos3_worker.wait()
+    for worker in (cosmos3_worker, wan5b_worker):
+        if worker is not None:
+            worker.stdin.close()
+            worker.wait()
     print(f"{args.method} {args.dataset}: {done} rendered, {skipped} already there, {failed} failed")
     sys.exit(1 if failed else 0)
 
