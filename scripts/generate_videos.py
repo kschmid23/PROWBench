@@ -102,7 +102,7 @@ def render_edenlive(args: argparse.Namespace, dataset_dir: Path, sample: dict, p
 
 def render_matrix4(args: argparse.Namespace, dataset_dir: Path, sample: dict, prompt: str, target: Path) -> None:
     root = Path(args.matrix4_root)
-    work = root / "outputs" / "prowbench" / sample["dataset"] / sample_id(sample)
+    work = root / "outputs" / "prowbench" / args.scene / sample["dataset"] / sample_id(sample)
     work.parent.mkdir(parents=True, exist_ok=True)
     rendered = work / "rendered.mp4"
     if work.is_dir() and not rendered.is_file():
